@@ -10,12 +10,9 @@ matrix_a = []
 matrix_b = []
 
 # Create Empty Sphere Parameter Message
-Filtered_Sphere_Parameters = SphereParams()
-#Unfiltered_Sphere_Parameters = SphereParams()
-# Create global variables for initial filter guesses
-initial_measurements_unobtained = True
+Filtered_Sphere_Params = SphereParams()
 
-# Create Boolean flag attempt
+# Create Boolean flag (rename)
 something = False
 
 
@@ -34,31 +31,36 @@ def receive_point_data(point_data):
 
 		
 def model_fitting(matrix_a, matrix_b):
+	global something
 	P = np.array([])
-	Unfiltered_Sphere_Parameters = SphereParams()
+	
+	Unfiltered_Sphere_Params = SphereParams()
 	# Create numpy arrays out of our initial matrices
 	A = np.array(matrix_a)
 	B = np.array(matrix_b)
 	# Calculate P -- Catch error when matrice dimensions do not match requirements
 	try:
 		P = np.linalg.lstsq(A, B, rcond=None)[0]
+		print(P[0])
+		
+		if len(P) > 0:
+			Unfiltered_Sphere_Params.xc = P[0]
+			Unfiltered_Sphere_Params.yc = P[1]
+			Unfiltered_Sphere_Params.zc = P[2]
+			Unfiltered_Sphere_Params.radius = math.sqrt(P[3] + P[0]**2 + P[1]**2 + P[2]**2)
+		
+			something = True
+		
+			return Unfiltered_Sphere_Params
+		
+		
 	except:
 		something = False
 		print("Dimension error in calculation -- Continuing on!")
 		
-	# This could be moved inside the try block(?)
-	if len(P) > 0:
-		Unfiltered_Sphere_Params.xc = P[0]
-		Unfiltered_Sphere_Params.yc = P[1]
-		Unfiltered_Sphere_Params.zc = P[2]
-		Unfiltered_Sphere_Params.radius = math.sqrt(P[3] + P[0]**2 + P[1]**2 + P[2]**2)
-		
-		something = True
-		
-		return Unfiltered_Sphere_Params
 	
 def filter_sphere_params(Unfiltered_Sphere_Params):
-	
+	print("not in use")
 	
 
 if __name__ == '__main__':
@@ -74,11 +76,11 @@ if __name__ == '__main__':
 	while not rospy.is_shutdown():
 		# If our initial matrices are constructed and not empty -- Run model fitting function
 		if len(matrix_a) > 0 and len(matrix_b) > 0:
-			model_fitting(matrix_a, matrix_b)
+			Unfiltered_Sphere_Params = model_fitting(matrix_a, matrix_b)
 			# If P has received valid data -- Calculate Sphere Parameters
 			if something:
-				Filtered_Sphere_Params = filter_sphere_params(Unfiltered_Sphere_Params)
+				#Filtered_Sphere_Params = filter_sphere_params(Unfiltered_Sphere_Params)
 				# Publish Sphere Parameters
-				sphere_parameter_pub.publish(Filtered_Sphere_Parameters)
+				sphere_parameter_pub.publish(Unfiltered_Sphere_Params)
 			
 		rate.sleep()
