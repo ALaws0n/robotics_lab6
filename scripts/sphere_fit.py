@@ -8,20 +8,16 @@ from robot_vision_lectures.msg import SphereParams
 # Create Initial A and B matrices
 matrix_a = []
 matrix_b = []
-# Create empty numpy array for P
-P = np.array([])
-# Create Empty Sphere Parameter Message
-Sphere_Parameters = SphereParams()
-# Create global variables for initial filter guesses
-initial_measurements_unobtained = True
+
+# Create Initial filter output values
 fil_x_out = 0.0
 fil_y_out = 0.0
 fil_z_out = 0.0
 fil_r_out = 0.0
-fil_x_in = 0.0
-fil_y_in = 0.0
-fil_z_in = 0.0
-fil_r_in = 0.0
+
+# Create Global Boolean Flags
+valid_unfiltered_parameters = False
+first_filtering = True
 
 
 def receive_point_data(point_data):
@@ -38,63 +34,85 @@ def receive_point_data(point_data):
 			print("Data is not being appended")
 
 		
-def model_fitting_formula(matrix_a, matrix_b):
-	global P
+def model_fitting(matrix_a, matrix_b):
+
+	# Boolean flag for detecting the presence of valid sphere parameters
+	global valid_unfiltered_parameters
+	
 	# Create numpy arrays out of our initial matrices
 	A = np.array(matrix_a)
 	B = np.array(matrix_b)
+	
+	# Create Empty Numpy array for storing result of model fitting
+	P = np.array([])
+	
+	# Create Empty Sphere Params message for unfiltered Params
+	Unfiltered_Sphere_Params = SphereParams()
+	
+
 	# Calculate P -- Catch error when matrice dimensions do not match requirements
 	try:
-		#ATA = np.matmul(A.T, A)
-		#ATB = np.matmul(A.T, B)
-		#P = np.matmul(np.linalg.inv(ATA), ATB)
 		P = np.linalg.lstsq(A, B, rcond=None)[0]
+		# Set unfiltered sphere param message
+		Unfiltered_Sphere_Params.xc = P[0]
+		Unfiltered_Sphere_Params.yc = P[1]
+		Unfiltered_Sphere_Params.zc = P[2]
+		Unfiltered_Sphere_Params.radius = math.sqrt(P[3] + P[0]**2 + P[1]**2 + P[2]**2)
+		# Flip boolean flag due to valid parameters being recieved 
+		valid_unfiltered_parameters = True
+		# Return unfiltered parameter message
+		return Unfiltered_Sphere_Params
 	except:
+		# Flip boolean flag due to parameter calculation failure
+		valid_unfiltered_parameters = False
 		print("Dimension error in calculation -- Continuing on!")
+		
 	
-	
-def calculate_and_filter_sphere_params(P):
-	global initial_measurements_unobtained
+def filter_sphere_params(Unfiltered_Sphere_Params, fil_gain):
+
+	# Boolean flag for detecting the first filtering attempt
+	global first_filtering
+	# References to the inital filter output values
 	global fil_x_out
 	global fil_y_out
 	global fil_z_out
 	global fil_r_out
-	global fil_x_in
-	global fil_y_in
-	global fil_z_in
-	global fil_r_in
-	# Set center parameters for sphere
-	#print(P[0])
-	#print(P[1])
-	#print(P[2])
 	
-	# Define Filter Gain value
-	fil_gain = 0.8
-	# Grab initial center and radius position measurements
-	if initial_measurements_unobtained:
-		fil_x_out = P[0]
-		fil_y_out = P[1]
-		fil_z_out = P[2]
-		fil_r_out = math.sqrt(P[3] + P[0]**2 + P[1]**2 + P[2]**2)
-		initial_measurements_unobtained = False
-	# Update filter input
-	fil_x_in = P[0]
-	print('fil_x_in:', fil_x_in, ' fil_x_out now:', fil_x_out)
-	fil_y_in = P[1]
-	fil_z_in = P[2]
-	fil_r_in = math.sqrt(P[3] + P[0]**2 + P[1]**2 + P[2]**2)
-	# Filter the data
+	# Create Empty Sphere Parameter Message for Filtered Parameters
+	Filtered_Sphere_Params = SphereParams()
+	
+	# Stores first parameter readins as our intial output guesses
+	if first_filtering:
+		# Set filter output values
+		fil_x_out = Unfiltered_Sphere_Params.xc
+		fil_y_out = Unfiltered_Sphere_Params.yc
+		fil_z_out = Unfiltered_Sphere_Params.zc
+		fil_r_out = Unfiltered_Sphere_Params.radius
+		# Flip flag to ensure this does not execute again
+		first_filtering = False
+	
+	# Set filter input values
+	fil_x_in = Unfiltered_Sphere_Params.xc
+	fil_y_in = Unfiltered_Sphere_Params.yc
+	fil_z_in = Unfiltered_Sphere_Params.zc
+	fil_r_in = Unfiltered_Sphere_Params.radius
+	
+	# Filter the Sphere Parameters
 	fil_x_out = fil_gain*fil_x_in + (1 - fil_gain)*fil_x_out
-	print('fil_x_out next:', fil_x_out)
 	fil_y_out = fil_gain*fil_y_in + (1 - fil_gain)*fil_y_out
 	fil_z_out = fil_gain*fil_z_in + (1 - fil_gain)*fil_z_out
 	fil_r_out = fil_gain*fil_r_in + (1 - fil_gain)*fil_r_out
-	# Set Sphere Parameters
-	Sphere_Parameters.xc = fil_x_out
-	Sphere_Parameters.yc = fil_y_out
-	Sphere_Parameters.zc = fil_z_out
-	Sphere_Parameters.radius = fil_r_out
-
+	
+	# Set Filtered_Sphere_Params message values based off filter ouput
+	Filtered_Sphere_Params.xc = fil_x_out
+	Filtered_Sphere_Params.yc = fil_y_out
+	Filtered_Sphere_Params.zc = fil_z_out
+	Filtered_Sphere_Params.radius = fil_r_out
+	
+	# Return Filtered Sphere Parameters
+	return Filtered_Sphere_Params
+	
+	
 if __name__ == '__main__':
 	# Initialize the ball detection node
 	rospy.init_node('sphere_fit', anonymous = True)
@@ -104,15 +122,17 @@ if __name__ == '__main__':
 	sphere_parameter_pub = rospy.Publisher("/sphere_params", SphereParams, queue_size = 10)
 	# Set 10hz loop rate
 	rate = rospy.Rate(10)
+	# Set Filter Gain
+	fil_gain = 0.05
 	
 	while not rospy.is_shutdown():
 		# If our initial matrices are constructed and not empty -- Run model fitting function
 		if len(matrix_a) > 0 and len(matrix_b) > 0:
-			model_fitting_formula(matrix_a, matrix_b)
-			# If P has received valid data -- Calculate Sphere Parameters
-			if len(P) > 0:
-				calculate_and_filter_sphere_params(P)
-				# Publish Sphere Parameters
-				sphere_parameter_pub.publish(Sphere_Parameters)
+			Unfiltered_Sphere_Params = model_fitting(matrix_a, matrix_b)
+			# If valid unfiltered sphere parameters have been returned
+			if valid_unfiltered_parameters:
+				Filtered_Sphere_Parameters = filter_sphere_params(Unfiltered_Sphere_Params, fil_gain)
+				# Publish Filtered Sphere Parameters
+				sphere_parameter_pub.publish(Filtered_Sphere_Parameters)
 			
 		rate.sleep()
